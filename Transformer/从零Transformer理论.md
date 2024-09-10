@@ -318,4 +318,44 @@ Self-Attention可以做并行（每个单词$i$的输出注意力值都可以同
 
 
 
-## 13 Multi-Head Self-Attention
+## 13 Multi-Head Self-Attention（多头注意力机制）
+
+过程：输入单词的embedding向量$X$切割成$n$份，经过$n$组$W_Q、W_K、W_V$矩阵得到$n$组$Q、K、V$向量，每组分别做一个attention计算，将得到的$n$组向量$Z_i$合并成向量$Z$，最终再乘以权重向量$W^O$得到最终该单词的注意力值
+
+![](./assets/multi-head-attention_1.png)
+
+![](./assets/multi-head-attention_2.jpg)
+
+
+
+## 14 Positional Encoding 位置编码
+
+Self-Attention缺点：计算注意力值的时候只考虑上文有哪些词，而没有考虑这些词的顺序。因此我们要加入这些词的顺序信息。
+
+
+
+具体做法：
+
+$PE_{(pos,i)}=sin(pos/10000^{2i/d})(i是偶数)$
+
+$PE_{(pos,i)} = cos(pos/10000^{2(i-1)/d})(i是奇数)$
+
+这里$pos$是当前词在长句子中的位置下标，$i$是该词的词向量的元素下标，$d$是该词的词向量的长度
+
+
+
+### 为什么这么做有用？
+
+由三角函数展开式
+
+$sin(\alpha+\beta) = sin\alpha cos\beta+cos\alpha sin\beta$
+
+$cos(\alpha+\beta)=cos\alpha cos\beta-sin\alpha sin\beta$
+
+我们可以得到：
+
+$PE(pos+k,2i) = PE(pos,2i)·PE(k,2i+1) + PE(pos,2i+1)·PE(k,2i)$
+
+$PE(pos+k,2i+1)=PE(pos,2i+1)·PE(k,2i+1)-PE(pos,2i)·PE(k,2i)$
+
+这样，对pos+k位置的单词的i位置的编码，是由位置pos和位置k向量的i和i+1位置的线性组合而来
