@@ -366,6 +366,22 @@ $PE(pos+k,2i+1)=PE(pos,2i+1)·PE(k,2i+1)-PE(pos,2i)·PE(k,2i)$
 
 ## 15 Transformer 框架概述
 
+NLP中预训练的目的：生成词向量
+
+Transformer就是Attention的堆叠
+
+
+
+seq2seq
+
+序列（编码器）到序列（解码器）
+
+序列：有前后关系的一串东西（一句话，一个视频）
+
+
+
+**分成两部分：**
+
 编码器：把输出变成一个词向量（Self-Attention）
 
 解码器：得到编码器输出的词向量后，生成翻译的结果
@@ -379,4 +395,60 @@ $PE(pos+k,2i+1)=PE(pos,2i+1)·PE(k,2i+1)-PE(pos,2i)·PE(k,2i)$
 
 
 Feed Forward：前馈神经网络FFN：一种最基础的神经网络架构，其中信息只在网络中单向传播，从输入层经过一个或多个隐藏层，最后到达输出层，大体上可以理解为MLP或其微调变体。
+
+
+
+
+
+## 16 编码器 Encoder —— 更优秀的词向量
+
+Encoder总览：大体上由一个Self-Attention和一个前馈网络层组成；核心目的——将源单词转化为它的词向量（这里主要是K、V）供Decoder使用
+
+![](./assets/encoder_overview.jpg)
+
+
+
+Encoder细节图：
+
+
+
+![](./assets/encoder_detail.png)
+
+详细步骤：（以词thinking为例）
+
+1. thinking -简易的embedding，如`word2vec`或`one-hot`编码-> 绿色的$x_1$
+
+2. $x_1$->加入位置编码->得到黄色的$x_1$
+
+3. 通过自注意力机制获取上下文信息，得到$z_1$
+
+4. 加一层残差网络，防止梯度消失/爆炸
+5. $z_1$-前馈神经网络->得到网络输出（词向量）
+6. 循环上面的过程，得到最终输出
+
+
+
+Encoder提供序列中每个词的K、V向量给Decoder使用
+
+
+
+## 17 解码器 Decoder
+
+Decoder总览：最底部输入已经生成的目标词，中间输入Encoder生成的词向量，输出最终的结果
+
+
+
+![](./assets/transformer_overview.jpg)
+
+
+
+**Decoder细节流程：**
+
+1. 已经生成好的outputs经过普通embedding、positional embedding后做attention、残差网络得到Q向量，作为对Encoder生成的K、V矩阵的查询（注意训练阶段所有outputs已知，但模型不应当知道还未生成的outputs，故这里要用到Masked Multi-head Attention
+
+2. 该Q向量与K、V矩阵做Attention，输出结果经过残差网络和前馈网络，再通过Linear层将维度变为词表相同的维度，最终softmax换成概率生成下一个output
+
+
+
+
 
