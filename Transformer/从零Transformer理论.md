@@ -446,9 +446,64 @@ Decoder总览：最底部输入已经生成的目标词，中间输入Encoder生
 
 1. 已经生成好的outputs经过普通embedding、positional embedding后做attention、残差网络得到Q向量，作为对Encoder生成的K、V矩阵的查询（注意训练阶段所有outputs已知，但模型不应当知道还未生成的outputs，故这里要用到Masked Multi-head Attention
 
-2. 该Q向量与K、V矩阵做Attention，输出结果经过残差网络和前馈网络，再通过Linear层将维度变为词表相同的维度，最终softmax换成概率生成下一个output
+2. 该Q向量与K、V矩阵做Encoder-Decoder Attention，输出结果经过残差网络和前馈网络，再通过Linear层将维度变为词表相同的维度，最终softmax换成概率生成下一个output，即目标序列的一个词
+
+3. 步骤2中生成的那个词配合之前生成的词再输入Masked Multi-Head Attention层，做下一个词的生成
 
 
 
 
 
+
+
+## 18 Transformer全流程
+
+以机器翻译任务为例，将法语翻译成英语
+
+
+
+**第一个词的生成：**
+
+Encoder将所有词转化为词向量，提供K、V矩阵供给Decoder使用。由于是第一个词，Decoder无法接受之前的outputs（可能是另一个类似\<eof>符号的输入作为Q，不太清楚），利用此K、V矩阵生成第一个词
+
+![](./assets/transformer_active_1.gif)
+
+
+
+
+
+**后续单词的生成：**
+
+将前面生成的单词作为outputs输入Masked Multi-Head Attention层，得到下一个输出，循环该过程
+
+![](.\assets\transformer_active_2.gif)
+
+
+
+
+
+## 19 Transformer解码器的两个为什么
+
+**为什么做掩码？**
+
+训练时和测试时的区别
+
+训练时整个目标序列已知，但实际生成第i+1个词时应当只知道前i个词的信息，故需要把后续的单词进行masked
+
+
+
+**为什么用Encoder-Decoder Attention？**
+
+Q来源Decoder，K==V来源于Encoder
+
+当我们生成这个词的时候，通过已经生成的词和源语句做注意力机制，通过部分去全部的里面挑重点
+
+
+
+解决了以前的`seq2seq`框架的问题
+
+lstm做编码器（得到词向量C），再用lstm做解码器生成
+
+用这种方法去生成词，每一次生成词，都是通过C的全部信息去生成
+
+很多信息对于当前生成词而言都是没有意义的
