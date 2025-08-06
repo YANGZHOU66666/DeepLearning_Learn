@@ -68,7 +68,7 @@ $Loss = -log\ sigmoid(score_{chosen}-score_{rejected})=-\log(\frac{1}{1+e^{-x}})
 
 - 如何定义每个action（即生成单个token）的reward？
 
-这里使用直接的reward（奖励模型输出的值，只有最后一个有）和基准/训练模型在输出每个token时概率分布的KL散度来计算。$reward = KL*(-0.2)+score$。0.2应该是设置的超参数
+这里使用直接的reward（奖励模型输出的值，只有最后一个有）和基准/训练模型在输出每个token时概率分布的KL散度来计算。$reward = KL*(-0.2)+score$。0.2是设置的权重超参数
 
 ![](./assets/reward计算.png)
 
@@ -147,13 +147,13 @@ $Loss_{ppo} = -\frac{1}{N} \sum_{n=1}^{N} \sum_{t=1}^{T_n} A_{\theta'}^{GAE}(s_n
 1. 进行重要性采样的模型可以与参考模型不一样
 2. KL散度已经在Reward中体现，已经通过Reward进入了Loss函数
 
-$Loss_{\text{ppo}} = -\frac{1}{N} \sum_{n=1}^{N} \sum_{t=1}^{T} A_{\theta''}^{\text{GAE}}(s_n^t, a_n^t) \frac{P_{\theta}(a_n^t | s_n^t)}{P_{\theta''}(a_n^t | s_n^t)}$
+实际训练使用的公式：$Loss_{\text{ppo}} = -\frac{1}{N} \sum_{n=1}^{N} \sum_{t=1}^{T} A_{\theta''}^{\text{GAE}}(s_n^t, a_n^t) \frac{P_{\theta}(a_n^t | s_n^t)}{P_{\theta''}(a_n^t | s_n^t)}$
 
 $\theta$：训练模型
 
 $\theta'$：基准模型
 
-$\theta''$：重要性采样模型，训练过程中逐步更新，始终保持和训练模型相差不大
+$\theta''$：重要性采样模型，训练过程中逐步更新，始终保持和训练模型相差不大（每个batch开始时将训练模型的参数同步到该模型上）
 
 代码：
 
