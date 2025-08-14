@@ -96,7 +96,9 @@ $\begin{align*}
 
 $\begin{align*} \pi(y|x) &= \frac{1}{Z(x)} \pi_{\text{ref}}(y|x) \exp\left( \frac{1}{\beta} r(x, y) \right) \\ \implies \exp\left( \frac{1}{\beta} r(x, y) \right) &= \frac{\pi(y|x)}{\pi_{\text{ref}}(y|x)} Z(x) \\ \implies r(x, y) &= \beta \ln\left( \frac{\pi(y|x)}{\pi_{\text{ref}}(y|x)} Z(x) \right) \\ \implies r(x, y) &= \beta \ln \frac{\pi(y|x)}{\pi_{\text{ref}}(y|x)} + \beta \ln Z(x) \\ \end{align*}$
 
-根据我们从Bradley-Terry模型中的Loss式子，我们最终的Loss函数为：
+这个式子表现了最优解下$r(x,y)$和$\pi(x,y)$的定量关系，**好回答（r大）策略概率高，坏回答（r小）概率低**，符合直觉。有了这个式子，就有了r和$\pi$之间的闭式解
+
+根据我们从Bradley-Terry模型中的Loss式子，我们最终的Loss函数（本来是用于训练reward模型的）为：
 
 $\begin{align*}
 &-\ln \sigma(r(x, y_w) - r(x, y_l)) \\
@@ -105,3 +107,5 @@ $\begin{align*}
 \end{align*}$
 
 （其中$\sigma(x) = \frac{1}{1 + \exp(-x)}$）
+
+DPO巧妙消除了$r(x,y)$这一奖励函数“中间变量”，损失函数可以直接对策略函数的参数进行优化
