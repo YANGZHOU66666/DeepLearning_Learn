@@ -1,6 +1,6 @@
 # VeRL记录
 
-## 安装（这是个错误的示范，可以跳过）
+## 安装（这是个错误的示范，可以跳过，直接看QuickStart的安装部分）
 
 AutoDL服务器环境：
 
@@ -36,7 +36,7 @@ export HF_ENDPOINT=https://hf-mirror.com
 python3 examples/data_preprocess/gsm8k.py --local_dir ~/data/gsm8k
 ```
 
-根据demo，调整自己的数据集和模型位置（我是下在本地了），运行以下指令：
+根据demo，调整自己的数据集和模型位置的参数（我是下在本地了），运行以下指令：
 
 ```bash
 PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
@@ -208,54 +208,231 @@ Training Progress:  18%|██████████████████�
 Training Progress:  18%|█████████████████████████▍                                                                                                                | 80/435 [1:19:46<6:46:13, 68.66s/it]
 ```
 
+### 模型合并
 
-
-## 数据准备 Data Preparation
-
-核心思路：将数据集做成有如下几个字段的列表：
+输入指令：
 
 ```
-1. data_source
-作用: 数据集的唯一标识符，用于后续匹配对应的奖励函数。
-格式: 字符串 (String)。
-示例: 'openai
+python3 -m verl.model_merger merge \
+--backend fsdp \
+--local_dir checkpoints/verl_examples/gsm8k/global_step_430/actor \
+--target_dir /root/autodl-tmp/final_model
+```
 
-2. prompt
-作用: 将要输入给大模型的实际内容。
-格式: Hugging Face chat_template 格式（一个字典列表）。
-角色 (role):
-"user": 代表用户的直接输入。
-"system": (可选) 用于提供高层次的系统级指令或设定模型的“人设”，通常放在列表开头。
-"assistant": (可选) 用于多轮对话中模型的回复。
+合成的模型被保存到/autodl-tmp/final_model
 
-示例:
-[
-    { "role": "system", "content": "你是一位专业的代码助手。" },
-    { "role": "user", "content": "用 Python 写一个快速排序算法。" }
+### 使用训好的模型
+
+编写脚本`test_my_model.py`:
+
+```python
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+
+# 1. 指定你刚刚合并好的模型路径
+# 确保这个路径就是 model_merger 命令中 --target_dir 的路径
+model_path = "/root/autodl-tmp/final_model"
+
+print(f"正在从 '{model_path}' 加载模型和分词器...")
+
+# 2. 加载模型和分词器
+# 我们使用 bfloat16 来加载，这在现代 GPU 上效率更高
+model = AutoModelForCausalLM.from_pretrained(
+    model_path,
+    torch_dtype=torch.bfloat16,
+    device_map="auto" # 自动将模型加载到 GPU
+)
+tokenizer = AutoTokenizer.from_pretrained(model_path)
+
+print("模型加载成功！")
+
+# 3. 创建一个 pipeline 用于文本生成
+pipe = pipeline("text-generation", model=model, tokenizer=tokenizer)
+
+# 4. 准备一个测试问题
+# 这个问题和官方文档里的例子类似，但数字不同，看看模型能否举一反三
+question = "一个面包师用面粉和糖制作蛋糕，比例是 9:4。如果他总共用了 169 公斤的原料，请问他用了多少公斤的面粉？ Let's think step by step and output the final answer after \"####\"."
+
+# 5. 构建符合模型训练格式的 prompt
+# 注意：这里的格式必须和你数据预处理时使用的格式完全一致！
+messages = [
+    {"role": "user", "content": question}
 ]
+prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
-3. ability
-作用: 定义任务所属的类别。
-格式: 字符串 (String)。
-示例: 'math', 'coding', 'translation', 'summarization'。
+print("\n--- Sending Prompt to Model ---")
+print(prompt)
+print("-----------------------------\n")
 
-4. reward_model
-作用: 存放用于计算奖励 (Reward) 的信息。
-格式: 字典 (Dictionary)。
-内部字段:
-style: 奖励计算的方式。示例值为 "rule"，表示基于规则匹配。
-ground_truth: 标准答案。其数据类型灵活，取决于你的任务。你提供的 ground_truth 必须能被你的奖励函数正确解析。
+# 6. 进行推理
+outputs = pipe(
+    prompt,
+    max_new_tokens=256, # 生成答案的最大长度
+    do_sample=False,    # 使用确定性解码，而不是随机采样
+    temperature=0.0,
+    top_p=1.0,
+)
 
-示例:
-{
-    "style": "rule",
-    "ground_truth": "15"
-}
-
-5. extra_info
-作用: 记录与训练无关的额外信息，主要用于调试和数据溯源。
-格式: 字典 (Dictionary)。
-示例: {'split': 'train', 'index': 42}。
+# 7. 打印结果
+print("--- Model Generated Response ---")
+print(outputs[0]['generated_text'])
+print("------------------------------\n")
 ```
 
-然后转化为**.parquet**格式
+示例回答：
+
+```
+(/root/autodl-tmp/conda_envs/verl_env) root@autodl-container-2f694b8462-c9a87a29:~/autodl-tmp/verl# python3 -m verl.model_merger merge --backend fsdp --local dir checkpoints/verl_examples/gsm8k/global_step_435/actor --target_dir /root/autodl-tmp/final_model
+usage: __main__.py [-h] {merge,test} ...
+__main__.py: error: unrecognized arguments: checkpoints/verl_examples/gsm8k/global_step_435/actor
+(/root/autodl-tmp/conda_envs/verl_env) root@autodl-container-2f694b8462-c9a87a29:~/autodl-tmp/verl# python3 -m verl.model_merger merge --backend fsdp --local_dir checkpoints/verl_examples/gsm8k/global
+_step_435/actor --target_dir /root/autodl-tmp/final_model
+config: ModelMergerConfig(operation='merge', backend='fsdp', target_dir='/root/autodl-tmp/final_model', hf_upload_path=None, private=False, test_hf_dir=None, tie_word_embedding=False, trust_remote_code=False, is_value_model=False, local_dir='checkpoints/verl_examples/gsm8k/global_step_435/actor', hf_model_config_path='checkpoints/verl_examples/gsm8k/global_step_435/actor/huggingface', hf_upload=False, use_cpu_initialization=False)
+Got device mesh [1], mesh_dim_names ('fsdp',)
+Processing model shards with 1 (1,) in total
+Loading 1 FSDP shards: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 1/1 [00:01<00:00,  1.95s/it]
+Sliding Window Attention is enabled but not implemented for `eager`; unexpected results may be encountered.
+Saving model to /root/autodl-tmp/final_model
+Saving tokenizer to /root/autodl-tmp/final_model
+(/root/autodl-tmp/conda_envs/verl_env) root@autodl-container-2f694b8462-c9a87a29:~/autodl-tmp/verl# python3 test_my_model.py
+(/root/autodl-tmp/conda_envs/verl_env) root@autodl-container-2f694b8462-c9a87a29:~/autodl-tmp/verl# python3 test_my_model.py
+正在从 '/root/autodl-tmp/final_model' 加载模型和分词器...
+Sliding Window Attention is enabled but not implemented for `sdpa`; unexpected results may be encountered.
+模型加载成功！
+Device set to use cuda:0
+
+--- Sending Prompt to Model ---
+<|im_start|>system
+You are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>
+<|im_start|>user
+一个面包师用面粉和糖制作蛋糕，比例是 9:4。如果他总共用了 169 公斤的原料，请问他用了多少公斤的面粉？ Let's think step by step and output the final answer after "####".<|im_end|>
+<|im_start|>assistant
+
+-----------------------------
+
+/root/autodl-tmp/conda_envs/verl_env/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:631: UserWarning: `do_sample` is set to `False`. However, `temperature` is set to `0.0` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `temperature`.
+  warnings.warn(
+/root/autodl-tmp/conda_envs/verl_env/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:653: UserWarning: `do_sample` is set to `False`. However, `top_k` is set to `20` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `top_k`.
+  warnings.warn(
+--- Model Generated Response ---
+<|im_start|>system
+You are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>
+<|im_start|>user
+一个面包师用面粉和糖制作蛋糕，比例是 9:4。如果他总共用了 169 公斤的原料，请问他用了多少公斤的面粉？ Let's think step by step and output the final answer after "####".<|im_end|>
+<|im_start|>assistant
+首先，设面粉的比例为 9x 公斤，糖的比例为 4x 公斤，根据题目中的比例关系，有 \(9x + 4x = 169\)。
+
+解这个等式得到：
+\[13x = 169\]
+\[x = \frac{169}{13}\]
+\[x = 13\]
+
+所以，面粉的比例是 9x = 9 * 13 = 117 公斤。
+
+因此，用了 117 公斤的面粉。
+
+#### 117
+#### 117
+------------------------------
+```
+
+## 尝试wandb
+
+尝试了一下使用wandb：
+
+```bash
+PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
+ data.train_files=$HOME/data/gsm8k/train.parquet \
+ data.val_files=$HOME/data/gsm8k/test.parquet \
+ data.train_batch_size=256 \
+ data.max_prompt_length=512 \
+ data.max_response_length=256 \
+ actor_rollout_ref.model.path=/root/autodl-tmp/Qwen2.5-0.5B-Instruct \
+ actor_rollout_ref.actor.optim.lr=1e-6 \
+ actor_rollout_ref.actor.ppo_mini_batch_size=64 \
+ actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
+ actor_rollout_ref.rollout.name=vllm \
+ actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
+ actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
+ actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
+ actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
+ critic.optim.lr=1e-5 \
+ critic.model.path=/root/autodl-tmp/Qwen2.5-0.5B-Instruct \
+ critic.ppo_micro_batch_size_per_gpu=4 \
+ algorithm.kl_ctrl.kl_coef=0.001 \
+ trainer.logger=[console,wandb] \
+ trainer.val_before_train=False \
+ trainer.n_gpus_per_node=1 \
+ trainer.nnodes=1 \
+ trainer.save_freq=10 \
+ trainer.test_freq=10 \
+ trainer.total_epochs=15 2>&1 | tee verl_demo.log
+```
+
+wandb的使用：在官网上注册一个账号，获取API key，然后在本地：
+
+```
+wandb login
+```
+
+按照引导输入API key即可，就算登陆成功，可以执行上面的训练指令了
+
+碰到 超时问题：
+
+```
+(TaskRunner pid=6534) wandb: Network error (ConnectTimeout), entering retry loop.
+```
+
+尝试使用配置国内代理解决：（发现没用，这个可能是gemini幻觉）
+
+```
+export WANDB_RELAY_URL=https://api.wandb.cn
+```
+
+发现能ping通但是延时比较长：
+
+```
+/root/autodl-tmp/conda_envs/verl_env) root@autodl-container-2f694b8462-c9a87a29:~/autodl-tmp/verl# ping www.wandb.ai
+PING www.wandb.ai (151.101.65.195) 56(84) bytes of data.
+64 bytes from 151.101.65.195 (151.101.65.195): icmp_seq=1 ttl=51 time=217 ms
+64 bytes from 151.101.65.195 (151.101.65.195): icmp_seq=2 ttl=51 time=201 ms
+64 bytes from 151.101.65.195 (151.101.65.195): icmp_seq=3 ttl=51 time=197 ms
+64 bytes from 151.101.65.195 (151.101.65.195): icmp_seq=4 ttl=51 time=196 ms
+64 bytes from 151.101.65.195 (151.101.65.195): icmp_seq=5 ttl=51 time=200 ms
+64 bytes from 151.101.65.195 (151.101.65.195): icmp_seq=6 ttl=51 time=208 ms
+```
+
+按照gemini建议改成
+
+```
+export WANDB_INIT_TIMEOUT=300
+```
+
+也没用，gemini给出的回答是连接实在太差，最后尝试本地的方案：
+
+设置环境变量`export WANDB_MODE=offline`，然后正常运行那个PPO启动的指令
+
+这里训到中间直接Ctrl+C了，尝试将对应wandb信息文件同步：
+
+```bash
+wandb sync wandb/offline-run-20250823_165526-l7dl7zrs
+```
+
+超时失败了：
+
+```
+wandb: Network error (ConnectTimeout), entering retry loop.
+```
+
+将整个`offline-run-20250823_165526-l7dl7zrs`文件夹下载到本地主机上，运行：
+
+```
+(WANDB_ENV) PS K:\大四\各种中间文件暂存\l7dl7zrs> wandb sync offline-run-20250823_165526-l7dl7zrs
+Find logs at: C:\Users\18326\AppData\Local\Temp\debug-cli.18326.log
+Syncing: https://wandb.ai/yangzhou66666-nanjing-university/verl_examples/runs/l7dl7zrs ... done.
+```
+
+成功了！在wandb官网上可以访问类似图像：
+
+![](./assets/wandb图像.png)
+
