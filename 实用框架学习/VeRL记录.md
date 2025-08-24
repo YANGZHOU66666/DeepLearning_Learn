@@ -410,7 +410,13 @@ export WANDB_INIT_TIMEOUT=300
 
 也没用，gemini给出的回答是连接实在太差，最后尝试本地的方案：
 
-设置环境变量`export WANDB_MODE=offline`，然后正常运行那个PPO启动的指令
+设置环境变量：
+
+````bash
+export WANDB_MODE=offline
+````
+
+然后正常运行那个PPO启动的指令
 
 这里训到中间直接Ctrl+C了，尝试将对应wandb信息文件同步：
 
@@ -435,4 +441,213 @@ Syncing: https://wandb.ai/yangzhou66666-nanjing-university/verl_examples/runs/l7
 成功了！在wandb官网上可以访问类似图像：
 
 ![](./assets/wandb图像.png)
+
+## 尝试从最新的检查点继续训练
+
+默认配置就是会从最新的检查点开始，因此只要直接重复执行之前的指令即可
+
+![](./assets/从最新的检查点开始.png)
+
+直接从380开始了，成功
+
+
+
+## 尝试GRPO和奖励模型
+
+从hugging face上下载奖励模型`Skywork-Reward-V2-Qwen3-0.6B`，放在`/autodl-tmp`下
+
+gemini给的指令，在ppo demo基础上修改了几个点
+
+**（血泪教训！！！一定要把下面指令的`＃`去了！！！否则`#`后面的指令命令行没收到！！！最开始直接复制上去了跑的很正常，最后发现没设成功Reward Model）**
+
+```bash
+PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
+ data.train_files=$HOME/data/gsm8k/train.parquet \
+ data.val_files=$HOME/data/gsm8k/test.parquet \
+ data.train_batch_size=256 \
+ data.max_prompt_length=512 \
+ data.max_response_length=256 \
+ actor_rollout_ref.model.path=/root/autodl-tmp/Qwen2.5-0.5B-Instruct \
+ actor_rollout_ref.actor.optim.lr=1e-6 \
+ actor_rollout_ref.actor.ppo_mini_batch_size=64 \
+ actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
+ actor_rollout_ref.actor.use_kl_loss=True \
+ actor_rollout_ref.rollout.name=vllm \
+ # --- grpo修改的指令: rollout.n=4, 每次采样四个回答 ---
+ actor_rollout_ref.rollout.n=4 \
+ actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
+ actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
+ actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
+ actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
+ critic.optim.lr=1e-5 \
+ critic.model.path=/root/autodl-tmp/Qwen2.5-0.5B-Instruct \
+ critic.ppo_micro_batch_size_per_gpu=4 \
+ # --- grpo修改的指令: 使用grpo的adv_estimator ---
+ algorithm.adv_estimator=grpo \
+ algorithm.kl_ctrl.kl_coef=0.001 \
+ trainer.logger=[console,wandb] \
+ trainer.val_before_train=False \
+ trainer.n_gpus_per_node=1 \
+ trainer.nnodes=1 \
+ trainer.save_freq=10 \
+ trainer.test_freq=10 \
+ trainer.total_epochs=15 \
+ # --- 启用奖励模型的新增/修改参数 ---
+ reward_model.enable=True \
+ reward_model.model.path=/root/autodl-tmp/Skywork-Reward-V2-Qwen3-0.6B \
+ 2>&1 | tee verl_grpo_rm_demo.log
+```
+
+出现了以下报错：
+
+`ValueError: [reward_model] Please set at least one of 'reward_model.micro_batch_size' or 'reward_model.micro_batch_size_per_gpu'`
+
+按照他的意思来修改：
+
+```bash
+PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
+ data.train_files=$HOME/data/gsm8k/train.parquet \
+ data.val_files=$HOME/data/gsm8k/test.parquet \
+ data.train_batch_size=256 \
+ data.max_prompt_length=512 \
+ data.max_response_length=256 \
+ actor_rollout_ref.model.path=/root/autodl-tmp/Qwen2.5-0.5B-Instruct \
+ actor_rollout_ref.actor.optim.lr=1e-6 \
+ actor_rollout_ref.actor.ppo_mini_batch_size=64 \
+ actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
+ actor_rollout_ref.actor.use_kl_loss=True \
+ actor_rollout_ref.rollout.name=vllm \
+ actor_rollout_ref.rollout.n=4 \
+ actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
+ actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
+ actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
+ actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
+ critic.optim.lr=1e-5 \
+ critic.model.path=/root/autodl-tmp/Qwen2.5-0.5B-Instruct \
+ critic.ppo_micro_batch_size_per_gpu=4 \
+ algorithm.adv_estimator=grpo \
+ algorithm.kl_ctrl.kl_coef=0.001 \
+ trainer.logger=[console,wandb] \
+ trainer.val_before_train=False \
+ trainer.n_gpus_per_node=1 \
+ trainer.nnodes=1 \
+ trainer.save_freq=10 \
+ trainer.test_freq=10 \
+ trainer.total_epochs=15 \
+ reward_model.enable=True \
+ reward_model.model.path=/root/autodl-tmp/Skywork-Reward-V2-Qwen3-0.6B \
+ # ---新增的关键参数---
+ reward_model.micro_batch_size_per_gpu=8 \
+ 2>&1 | tee verl_grpo_rm_demo.log
+```
+
+出现以下报错：
+
+```
+error executing job with overrides: ['data.train_files=/root/data/gsm8k/train.parquet', 'data.val_files=/root/data/gsm8k/test.parquet', 'data.train_batch_size=256', 'data.max_prompt_length=512', 'data.max_response_length=256', 'actor_rollout_ref.model.path=/root/autodl-tmp/Qwen2.5-0.5B-Instruct', 'actor_rollout_ref.actor.optim.lr=1e-6', 'actor_rollout_ref.actor.ppo_mini_batch_size=64', 'actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4', 'actor_rollout_ref.actor.use_kl_loss=True', 'actor_rollout_ref.rollout.name=vllm', 'actor_rollout_ref.rollout.n=4', 'actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8', 'actor_rollout_ref.rollout.tensor_model_parallel_size=1', 'actor_rollout_ref.rollout.gpu_memory_utilization=0.4', 'actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4', 'critic.optim.lr=1e-5', 'critic.model.path=/root/autodl-tmp/Qwen2.5-0.5B-Instruct', 'critic.ppo_micro_batch_size_per_gpu=4', 'algorithm.adv_estimator=grpo', 'algorithm.kl_ctrl.kl_coef=0.001', 'trainer.logger=[console,wandb]', 'trainer.val_before_train=False', 'trainer.n_gpus_per_node=1', 'trainer.nnodes=1', 'trainer.save_freq=10', 'trainer.test_freq=10', 'trainer.total_epochs=15', 'reward_model.enable=True', 'reward_model.model.path=/root/autodl-tmp/Skywork-Reward-V2-Qwen3-0.6B', 'reward_model.micro_batch_size_per_gpu=8']
+Traceback (most recent call last):
+  File "/root/autodl-tmp/verl/verl/trainer/main_ppo.py", line 40, in main
+    run_ppo(config)
+  File "/root/autodl-tmp/verl/verl/trainer/main_ppo.py", line 83, in run_ppo
+    ray.get(runner.run.remote(config))
+  File "/root/autodl-tmp/conda_envs/verl_env/lib/python3.10/site-packages/ray/_private/auto_init_hook.py", line 22, in auto_init_wrapper
+    return fn(*args, **kwargs)
+  File "/root/autodl-tmp/conda_envs/verl_env/lib/python3.10/site-packages/ray/_private/client_mode_hook.py", line 104, in wrapper
+    return func(*args, **kwargs)
+  File "/root/autodl-tmp/conda_envs/verl_env/lib/python3.10/site-packages/ray/_private/worker.py", line 2858, in get
+    values, debugger_breakpoint = worker.get_objects(object_refs, timeout=timeout)
+  File "/root/autodl-tmp/conda_envs/verl_env/lib/python3.10/site-packages/ray/_private/worker.py", line 958, in get_objects
+    raise value.as_instanceof_cause()
+ray.exceptions.RayTaskError(KeyError): ray::TaskRunner.run() (pid=16932, ip=172.17.0.11, actor_id=0078c64373fdca606e64f38b01000000, repr=<main_ppo.TaskRunner object at 0x7fbb55427c40>)
+  File "/root/autodl-tmp/verl/verl/trainer/main_ppo.py", line 285, in run
+    trainer.fit()
+  File "/root/autodl-tmp/verl/verl/trainer/ppo/ray_trainer.py", line 1174, in fit
+    reward_tensor = self.rm_wg.compute_rm_score(batch)
+  File "/root/autodl-tmp/verl/verl/single_controller/ray/base.py", line 48, in __call__
+    output = ray.get(output)
+ray.exceptions.RayTaskError(KeyError): ray::WorkerDict.rm_compute_rm_score() (pid=17374, ip=172.17.0.11, actor_id=47899a62d924bdeaa331edee01000000, repr=<verl.single_controller.ray.base.WorkerDict object at 0x7fce676ecb50>)
+  File "/root/autodl-tmp/verl/verl/single_controller/ray/base.py", line 701, in func
+    return getattr(self.worker_dict[key], name)(*args, **kwargs)
+  File "/root/autodl-tmp/verl/verl/single_controller/base/decorator.py", line 430, in inner
+    return func(*args, **kwargs)
+  File "/root/autodl-tmp/verl/verl/workers/fsdp_workers.py", line 1670, in compute_rm_score
+    rm_data = self._switch_chat_template(data)
+  File "/root/autodl-tmp/verl/verl/workers/fsdp_workers.py", line 1605, in _switch_chat_template
+    if not isinstance(data.non_tensor_batch["raw_prompt"][i], list | np.ndarray):
+KeyError: 'raw_prompt'
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.
+```
+
+gemini说是两种模型的格式不兼容，给出了以下修改：
+
+```bash
+PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
+ data.train_files=$HOME/data/gsm8k/train.parquet \
+ data.val_files=$HOME/data/gsm8k/test.parquet \
+ data.train_batch_size=256 \
+ data.max_prompt_length=512 \
+ data.max_response_length=256 \
+ # --- 新增的关键参数 ---
+ data.return_raw_chat=True \
+ actor_rollout_ref.model.path=/root/autodl-tmp/Qwen2.5-0.5B-Instruct \
+ actor_rollout_ref.actor.optim.lr=1e-6 \
+ actor_rollout_ref.actor.ppo_mini_batch_size=64 \
+ actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
+ actor_rollout_ref.actor.use_kl_loss=True \
+ actor_rollout_ref.rollout.name=vllm \
+ actor_rollout_ref.rollout.n=4 \
+ actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
+ actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
+ actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
+ actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
+ critic.optim.lr=1e-5 \
+ critic.model.path=/root/autodl-tmp/Qwen2.5-0.5B-Instruct \
+ critic.ppo_micro_batch_size_per_gpu=4 \
+ algorithm.adv_estimator=grpo \
+ algorithm.kl_ctrl.kl_coef=0.001 \
+ trainer.logger=[console,wandb] \
+ trainer.val_before_train=False \
+ trainer.n_gpus_per_node=1 \
+ trainer.nnodes=1 \
+ trainer.save_freq=10 \
+ trainer.test_freq=10 \
+ trainer.total_epochs=15 \
+ reward_model.enable=True \
+ reward_model.model.path=/root/autodl-tmp/Skywork-Reward-V2-Qwen3-0.6B \
+ reward_model.micro_batch_size_per_gpu=8 \
+ 2>&1 | tee verl_grpo_rm_demo.log
+```
+
+这次成功了！！有以下关键的log证明：
+
+- GRPO算法已启用：
+
+```
+(TaskRunner pid=20227)   'adv_estimator': 'grpo',
+(TaskRunner pid=20227)   'use_kl_loss': True,
+(TaskRunner pid=20227)   'n': 4, 
+```
+
+- 奖励模型已启用：
+
+```
+(TaskRunner pid=20227)  'reward_model': {'enable': True,
+...
+(TaskRunner pid=20227)                   'path': '/root/autodl-tmp/Skywork-Reward-V2-Qwen3-0.6B',
+...
+(TaskRunner pid=20227)                   'micro_batch_size_per_gpu': 8,
+```
+
+- Critic被自动禁用：
+
+```
+(TaskRunner pid=20227) /root/autodl-tmp/verl/verl/trainer/main_ppo.py:268: UserWarning: Disabled critic as algorithm.adv_estimator != gae. ...
+```
+
+- min reward和max reward不是1和0，说明用的是奖励模型而非之前的规则打分法
+
+```
+critic/rewards/max:10.6875 - critic/rewards/min:-11.375
+```
 
