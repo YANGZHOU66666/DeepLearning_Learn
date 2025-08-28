@@ -857,6 +857,8 @@ gpu数量：
 
 ## 尝试LoRA
 
+### 失败的部分
+
 gemini给的指令：
 
 ```bash
@@ -1086,3 +1088,182 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
 
 （2025.8.26Lora还没跑通，未完待续）
 
+尝试：不要这一行直接报错，加上这一行还是有乱码。失败！
+
+把Lora的VeRL官方文档和官方文档最后面给的例子给gemini，有给出了以下指令：
+
+```bash
+PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
+ data.train_files=$HOME/data/gsm8k/train.parquet \
+ data.val_files=$HOME/data/gsm8k/test.parquet \
+ data.train_batch_size=256 \
+ data.max_prompt_length=512 \
+ data.max_response_length=256 \
+ data.return_raw_chat=True \
+ data.return_raw_input_ids=True \
+ # --- 基础模型与 LoRA 配置 (对齐官方推荐) ---
+ actor_rollout_ref.model.path=/root/autodl-tmp/Qwen2.5-0.5B-Instruct \
+ actor_rollout_ref.model.lora_rank=32 \
+ actor_rollout_ref.model.lora_alpha=32 \
+ actor_rollout_ref.model.target_modules=all-linear \
+ actor_rollout_ref.model.enable_gradient_checkpointing=True \
+ # --- Actor 训练配置 (对齐官方推荐) ---
+ actor_rollout_ref.actor.optim.lr=3e-6 \
+ actor_rollout_ref.actor.ppo_mini_batch_size=64 \
+ actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
+ actor_rollout_ref.actor.use_kl_loss=True \
+ # --- Rollout 配置 (增加官方要求的关键参数) ---
+ actor_rollout_ref.rollout.name=vllm \
+ actor_rollout_ref.rollout.n=4 \
+ actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
+ actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
+ actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
+ actor_rollout_ref.rollout.load_format=safetensors \
+ actor_rollout_ref.rollout.layered_summon=True \
+ # --- Reference Model 配置 ---
+ actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
+ # --- Critic 配置 ---
+ critic.optim.lr=1e-5 \
+ critic.model.path=/root/autodl-tmp/Qwen2.5-0.5B-Instruct \
+ critic.ppo_micro_batch_size_per_gpu=4 \
+ # --- 算法与训练器配置 ---
+ algorithm.adv_estimator=grpo \
+ algorithm.kl_ctrl.kl_coef=0.001 \
+ trainer.logger=[console,wandb] \
+ trainer.val_before_train=False \
+ trainer.n_gpus_per_node=2 \
+ trainer.nnodes=1 \
+ trainer.save_freq=10 \
+ trainer.test_freq=10 \
+ trainer.total_epochs=15 \
+ # --- 奖励模型配置 ---
+ reward_model.enable=True \
+ reward_model.model.path=/root/autodl-tmp/Skywork-Reward-V2-Qwen3-0.6B \
+ reward_model.micro_batch_size_per_gpu=8 \
+ 2>&1 | tee verl_grpo_rm_lora_2gpu_official.log
+```
+
+不行，输出乱码，但输出得乱码不一样了。明天试试跑他的官方案例
+
+官方案例(autodl-tmp/verl/examples/grpo_trainer/run_qwen2_5-3b_gsm8k_grpo_lora.sh)魔改：
+
+```bash
+python3 -m verl.trainer.main_ppo \
+    algorithm.adv_estimator=grpo \
+    data.train_files=$HOME/data/gsm8k/train.parquet \
+    data.val_files=$HOME/data/gsm8k/test.parquet \
+    data.train_batch_size=256 \
+    data.max_prompt_length=512 \
+    data.max_response_length=256 \
+    data.filter_overlong_prompts=True \
+    data.truncation='error' \
+    data.shuffle=False \
+    actor_rollout_ref.model.path=/root/autodl-tmp/Qwen2.5-0.5B-Instruct \
+    actor_rollout_ref.model.use_shm=True \
+    actor_rollout_ref.model.lora_rank=64 \
+    actor_rollout_ref.model.lora_alpha=32 \
+    actor_rollout_ref.actor.optim.lr=3e-6 \
+    actor_rollout_ref.model.use_remove_padding=True \
+    actor_rollout_ref.actor.ppo_mini_batch_size=64 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.actor.use_kl_loss=True \
+    actor_rollout_ref.actor.kl_loss_coef=0.001 \
+    actor_rollout_ref.actor.kl_loss_type=low_var_kl \
+    actor_rollout_ref.actor.entropy_coeff=0 \
+    actor_rollout_ref.model.enable_gradient_checkpointing=True \
+    actor_rollout_ref.actor.fsdp_config.param_offload=False \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
+    actor_rollout_ref.rollout.name=vllm \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
+    actor_rollout_ref.rollout.n=4 \
+    actor_rollout_ref.rollout.load_format=safetensors \
+    actor_rollout_ref.rollout.layered_summon=True \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.ref.fsdp_config.param_offload=True \
+    algorithm.use_kl_in_reward=False \
+    trainer.critic_warmup=0 \
+    trainer.logger='["console","wandb"]' \
+    trainer.project_name='verl_grpo_example_gsm8k' \
+    trainer.experiment_name='qwen2.5_0.5b_grpo_lora' \
+    trainer.n_gpus_per_node=2 \
+    trainer.nnodes=1 \
+    trainer.save_freq=20 \
+    trainer.test_freq=5 \
+    trainer.total_epochs=15 $@
+```
+
+输出全叹号，唉：
+
+![](./assets/出现乱码-使用官方案例仍乱码.png)
+
+### 成功的部分
+
+看到了一个相关issue：[Running grpo with lora, the model response is "!!!!!!" · Issue #3159 · volcengine/verl](https://github.com/volcengine/verl/issues/3159)最下面[kfallah](https://github.com/kfallah)的回复，尝试了一下，将有一个pr[[trainer,rollout,doc\] feat: reduce minimum gpus to 96 for deepseek-v3 by techkang · Pull Request #3019 · volcengine/verl](https://github.com/volcengine/verl/pull/3019/files#diff-e12e758b29fcac6e5831bae88c8dbba4be0fc1847c762aba38642a024d63d4a1R207.)提交的几个sleep()后面的参数全换成1，指令还是上面那个。第0个batch没乱码。太晚了，跑起来了，明天早上起来看
+
+好了！没有乱码了：
+
+![](./assets/改sleep(1)后不出现乱码.png)
+
+加上奖励模型：
+
+```bash
+python3 -m verl.trainer.main_ppo \
+    algorithm.adv_estimator=grpo \
+    data.train_files=$HOME/data/gsm8k/train.parquet \
+    data.val_files=$HOME/data/gsm8k/test.parquet \
+    data.train_batch_size=256 \
+    data.max_prompt_length=512 \
+    data.max_response_length=256 \
+    data.filter_overlong_prompts=True \
+    data.truncation='error' \
+    data.shuffle=False \
+    data.return_raw_chat=True \
+    data.return_raw_input_ids=True \
+    actor_rollout_ref.model.path=/root/autodl-tmp/Qwen2.5-0.5B-Instruct \
+    actor_rollout_ref.model.use_shm=True \
+    actor_rollout_ref.model.lora_rank=64 \
+    actor_rollout_ref.model.lora_alpha=32 \
+    actor_rollout_ref.actor.optim.lr=3e-6 \
+    actor_rollout_ref.model.use_remove_padding=True \
+    actor_rollout_ref.actor.ppo_mini_batch_size=64 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.actor.use_kl_loss=True \
+    actor_rollout_ref.actor.kl_loss_coef=0.001 \
+    actor_rollout_ref.actor.kl_loss_type=low_var_kl \
+    actor_rollout_ref.actor.entropy_coeff=0 \
+    actor_rollout_ref.model.enable_gradient_checkpointing=True \
+    actor_rollout_ref.actor.fsdp_config.param_offload=False \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
+    actor_rollout_ref.rollout.name=vllm \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
+    actor_rollout_ref.rollout.n=4 \
+    actor_rollout_ref.rollout.load_format=safetensors \
+    actor_rollout_ref.rollout.layered_summon=True \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.ref.fsdp_config.param_offload=True \
+    algorithm.use_kl_in_reward=False \
+    trainer.critic_warmup=0 \
+    trainer.logger='["console","wandb"]' \
+    trainer.project_name='verl_grpo_example_gsm8k' \
+    trainer.experiment_name='qwen2.5_0.5b_grpo_lora' \
+    trainer.n_gpus_per_node=2 \
+    trainer.nnodes=1 \
+    trainer.save_freq=20 \
+    trainer.test_freq=5 \
+    trainer.total_epochs=15 \
+    reward_model.enable=True \
+    reward_model.model.path=/root/autodl-tmp/Skywork-Reward-V2-Qwen3-0.6B \
+    reward_model.micro_batch_size_per_gpu=8 $@
+```
+
+也没报错或乱码。
+
+reward的变化如下：
+
+![](./assets/grpo lora+reward model-reward曲折上升.png)
+
+应该没什么问题
