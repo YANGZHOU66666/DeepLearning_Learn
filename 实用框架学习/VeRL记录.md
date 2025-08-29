@@ -855,7 +855,7 @@ gpu数量：
 106/435 [4:52:09<15:05:17, 165.10s/it]
 ```
 
-## 尝试LoRA
+## 尝试LoRA + GRPO
 
 ### 失败的部分
 
@@ -1267,3 +1267,128 @@ reward的变化如下：
 ![](./assets/grpo lora+reward model-reward曲折上升.png)
 
 应该没什么问题
+
+### LoRA模型合并
+
+VeRL官方似乎暂时还没提供LoRA的model_merger（把相关代码问gemini了，说没有）
+
+以下是gemini给的一份`peft LoRA`合并脚本：（在autodl-tmp/verl下创建）
+
+```python
+import torch
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import os
+import shutil
+
+# --- 1. 配置路径 ---
+
+# 基础模型路径 (绝对路径)
+base_model_path = "/root/autodl-tmp/Qwen2.5-0.5B-Instruct"
+
+# !! 关键修改：使用完整的绝对路径 !!
+# 请将 'global_step_80' 替换成你最新的检查点编号
+lora_path = "checkpoints/verl_grpo_example_gsm8k/qwen2.5_0.5b_grpo_lora/global_step_80/actor/lora_adapter" 
+
+# 合并后最终模型的保存路径 (绝对路径)
+output_path = "/root/autodl-tmp/final_grpo_lora_merged_model"
+
+
+# --- 2. 开始合并 ---
+
+print(f"Loading base model from: {base_model_path}")
+base_model = AutoModelForCausalLM.from_pretrained(
+    base_model_path,
+    torch_dtype=torch.bfloat16,
+    device_map="auto"
+)
+
+print(f"Loading LoRA adapter from: {lora_path}")
+# PeftModel 会在 lora_path 下寻找 adapter_config.json
+model_to_merge = PeftModel.from_pretrained(base_model, lora_path)
+
+print("Merging LoRA weights into the base model...")
+merged_model = model_to_merge.merge_and_unload()
+print("Merge complete!")
+
+
+# --- 3. 保存最终的完整模型 ---
+
+print(f"Saving merged model to: {output_path}")
+if os.path.exists(output_path):
+    shutil.rmtree(output_path)
+    
+merged_model.save_pretrained(output_path)
+
+# 复制分词器文件
+tokenizer = AutoTokenizer.from_pretrained(base_model_path)
+tokenizer.save_pretrained(output_path)
+
+print(f"✅ Success! Your final merged model has been saved to '{output_path}'.")
+
+# 增加一个简单的检查，确保 lora_path 存在
+if not os.path.isdir(lora_path):
+    print(f"❌ Error: The LoRA path '{lora_path}' does not exist or is not a directory.")
+    print("Please make sure the checkpoint step (e.g., global_step_80) is correct.")
+```
+
+然后运行：
+
+```bash
+python3 merge_lora.py
+```
+
+注意，无卡模式下只有2G内存，不够合并，需要正常启动
+
+运行结果：
+
+```
+(/root/autodl-tmp/conda_envs/verl_env) root@autodl-container-2f694b8462-c9a87a29:~/autodl-tmp/verl# python3 merge_lora.py
+Loading base model from: /root/autodl-tmp/Qwen2.5-0.5B-Instruct
+Sliding Window Attention is enabled but not implemented for `sdpa`; unexpected results may be encountered.
+Loading LoRA adapter from: checkpoints/verl_grpo_example_gsm8k/qwen2.5_0.5b_grpo_lora/global_step_80/actor/lora_adapter
+/root/autodl-tmp/conda_envs/verl_env/lib/python3.10/site-packages/peft/config.py:225: UserWarning: The configuration file contains a `runtime_config` key. This is ignored. Runtime configurations are only valid at runtime.
+  warnings.warn(
+Merging LoRA weights into the base model...
+Merge complete!
+Saving merged model to: /root/autodl-tmp/final_grpo_lora_merged_model
+✅ Success! Your final merged model has been saved to '/root/autodl-tmp/final_grpo_lora_merged_model'.
+```
+
+使用验证脚本`test_my_model.py`尝试使用模型（本文QuickStart部分提到的）：
+
+```
+(/root/autodl-tmp/conda_envs/verl_env) root@autodl-container-2f694b8462-c9a87a29:~/autodl-tmp/verl# python3 test_my_model.py
+正在从 '/root/autodl-tmp/final_grpo_lora_merged_model' 加载模型和分词器...
+Sliding Window Attention is enabled but not implemented for `sdpa`; unexpected results may be encountered.
+模型加载成功！
+Device set to use cuda:0
+
+--- Sending Prompt to Model ---
+<|im_start|>system
+You are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>
+<|im_start|>user
+一个面包师用面粉和糖制作蛋糕，比例是 9:4。如果他总共用了 169 公斤的原料，请问他用了多少公斤的面粉？ Let's think step by step and output the final answer after "####".<|im_end|>
+<|im_start|>assistant
+
+-----------------------------
+
+/root/autodl-tmp/conda_envs/verl_env/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:631: UserWarning: `do_sample` is set to `False`. However, `temperature` is set to `0.0` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `temperature`.
+  warnings.warn(
+/root/autodl-tmp/conda_envs/verl_env/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:653: UserWarning: `do_sample` is set to `False`. However, `top_k` is set to `20` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `top_k`.
+  warnings.warn(
+--- Model Generated Response ---
+<|im_start|>system
+You are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>
+<|im_start|>user
+一个面包师用面粉和糖制作蛋糕，比例是 9:4。如果他总共用了 169 公斤的原料，请问他用了多少公斤的面粉？ Let's think step by step and output the final answer after "####".<|im_end|>
+<|im_start|>assistant
+设面粉的比例为 \(9:4\)，即面粉占总原料的 \(\frac{9}{9+4} = \frac{9}{13}\)。
+
+已知总原料量为 169 公斤，所以面粉的重量为：
+\[169 \times \frac{9}{13} = 123\]
+
+因此，面包师用了 123 公斤的面粉。#### 123
+------------------------------
+```
+

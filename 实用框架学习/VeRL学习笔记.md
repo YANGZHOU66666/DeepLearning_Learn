@@ -313,6 +313,38 @@ def reward_logic_v2(solution_str, ...):
 
 source: [Config Explanation — verl documentation](https://verl.readthedocs.io/en/latest/examples/config.html)
 
+### 文件结构
+
+强化学习的中央配置枢纽位于verl/verl/trainer/config/ppo_trainer.yaml，其内部将各个模块的细分配置放到了各个文件夹下：
+
+```yaml
+defaults:
+
+  # <folder_name>@<field_name>.<field_name>: <yaml_file_name>
+  # actor_rollout_ref.actor: trainer/config/actor/dp_actor.yaml
+  - actor@actor_rollout_ref.actor: dp_actor
+
+  # data: trainer/config/data/legacy_data.yaml
+  - data@data: legacy_data
+
+  # Reference model config.
+  # Reference model will be enabled when actor.use_kl_loss or/and algorithm.use_kl_in_reward is/are True.
+  - ref@actor_rollout_ref.ref: dp_ref
+
+  # Rollout model config.
+  - rollout@actor_rollout_ref.rollout: rollout
+
+  # Critic model config.
+  - critic@critic: dp_critic
+
+  # Reward model config.
+  - reward_model@reward_model: dp_reward_model
+```
+
+如actor相关的配置被放到了config/actor/dp_actor.yaml
+
+实际加载时，优先级：命令行里设置的参数 > ppo_trainer.yaml下面设置的具体参数 > 几个分散的配置文件定义的参数
+
 ### 框架内置的配置-加载原理
 
 配置的yaml文件都位于/verl/verl/trainer/config
@@ -345,87 +377,168 @@ python3 -m verl.trainer.main_ppo \
   data.train_batch_size=256 # 你仍然可以继续使用其他参数来覆盖
 ```
 
-### 配置详解
+### 配置详解（ppo_trainer.yaml）
 
-好的，这部分内容非常重要，它相当于 VeRL 框架的**“中央控制面板”**。你之前学习的所有模块——数据准备、模型、奖励函数——最终都是通过这个配置文件来组合和调度的。
+由于参数过于多，这里只整理个人当前认为相对重要的部分，本部分个人认为最重要的是知道大概分为哪几类参数，具体细节查文档即可
 
-这份文档详细解释了 `.yaml` 配置文件中的每一个参数。我会为你逐一梳理，并解释它们的核心作用。
+主要参数类别：**data**-和数据集有关的参数，包括数据集路径、对应数据列名、prompt与response长度限制、最外层的batch size、对数据进行怎么样的中间处理等；**actor_rollout_ref**-策略、采样、参考模型有关参数，包括通用模型路径、actor模型的配置如单次前向传播的batch size大小和actor模型的优化器等、rollout模型的配置、refrence模型的配置；**critic**-状态价值模型相关配置；**reward_model**-奖励函数相关配置；**custom_reward_function**-自定义奖励函数配置；**algorithm**-具体采用的算法相关的配置
 
-#### 核心概念：YAML 配置文件
+#### data: 数据相关配置
 
-你可以把 `.yaml` 文件想象成一个**“指令清单”**。当你运行训练命令时，框架会读取这个清单，并根据上面的每一项指令来设置训练的方方面面，从加载哪个数据到使用多大的学习率。
+**核心文件路径：**
 
-这份文档主要讲解了三个配置文件：
+**`data.train_files`**：指定**训练集**的 `.parquet` 文件路径。可以是一个单独的文件路径字符串，也可以是一个包含多个路径的列表。路径可以是本地路径或 HDFS 路径。
 
-1. **`ppo_trainer.yaml`**: 用于强化学习（PPO）训练的核心配置。
-2. **`evaluation.yaml`**: 用于对训练好的模型进行评估的配置。
-3. **`sft_trainer.yaml`**: 用于监督微调（SFT）的配置。
+**`data.val_files`**：指定**验证集**的 `.parquet` 文件路径。格式与 `train_files` 相同。
 
-我们重点来看最复杂的 `ppo_trainer.yaml`。
+**数据格式与长度：**
 
-#### `ppo_trainer.yaml` 详解
+**`data.prompt_key`**：指定在 Parquet 文件中，哪一列（哪个字段）是**输入提示 (prompt)**。**默认值**: `'prompt'`。
 
-1. **Data (数据配置)** `data:`
+**`data.max_prompt_length`**：设置输入提示的最大 token 长度。所有提示都会被**向左填充 (left-padded)** 到这个长度。如果原始提示超过此长度，会根据 `truncation` 参数进行处理。
 
-这部分负责告诉框架**“用什么数据，以及怎么用”**。
+**`data.max_response_length`**：设置模型在 RL 训练的 rollout 阶段，**生成回答的最大 token 长度**。
 
-- `train_files` / `val_files`: **最重要的参数**，指定你准备好的训练集和验证集的 `.parquet` 文件路径。
-- `max_prompt_length` / `max_response_length`: 定义了输入提示和模型生成内容的最大长度，这直接影响显存占用。
-- `train_batch_size`: 在一次完整的训练迭代中，从数据集中采样的总样本数。
-- `custom_cls`: 如果你写了一个自定义的数据集加载类（比 `make_map_fn` 更高级的定制），在这里通过 `path` 和 `name` 指定它。
+`data.truncation`：定义当输入提示超过 `max_prompt_length` 时的处理策略。**可选值**：`'error'`: (默认) 直接报错；`'left'`: 截断左边（开头）；`'right'`: 截断右边（结尾）；`'middle'`: 从中间截断，保留开头和结尾部分。
 
-2. **Actor/Rollout/Reference Policy (核心模型组)** `actor_rollout_ref:`
+**批处理与加载行为：**
 
-这是最核心、最复杂的配置区域，它同时定义了三个角色（Actor、Reference、Rollout）共享的模型信息。
+**`data.train_batch_size`**：在一次完整的训练迭代中，从数据集中采样的**总样本数量**。这个总批次后续会被 PPO 算法拆分成更小的 `mini_batch` 和 `micro_batch`。
 
-- **`model.path`**: **最重要的参数**，指定你要微调的基础模型路径（例如 "Qwen/Qwen2.5-0.5B-Instruct"）。
-- **`actor`**: 定义 **Actor 模型**（也就是我们正在训练的策略模型）的行为。
-  - `ppo_mini_batch_size`: PPO 算法会将 `train_batch_size` 拆分成更小的批次进行更新，这里定义了小批次的大小。
-  - `ppo_micro_batch_size_per_gpu`: 为了节省显存，每个 GPU 上的小批次还可以进一步拆分，这是“微批次”的大小，相当于梯度累积。
-  - `optim`: 定义优化器参数，**`lr` (学习率)** 是这里的关键。
-  - `fsdp_config`: FSDP 分布式训练的详细配置，比如是否开启参数卸载（`param_offload`）来节省显存。
-- **`ref`**: 定义 **Reference 模型**（一个固定的、未经训练的模型，用于计算 KL 散度惩罚）的行为。它的配置通常比较简单，主要是为了节省显存，可以开启 `param_offload`。
-- **`rollout`**: 定义 **Rollout 模型**（用于生成样本的推理模型）的行为。
-  - `name`: 选择推理引擎，通常是 `vllm`，因为它性能很高。
-  - `temperature`, `top_k`, `top_p`: 控制采样策略的参数，决定了生成内容的多样性。
-  - `tensor_model_parallel_size`: 在 vLLM 中使用的张量并行大小，用于将推理任务分布到多张卡上。
-  - `gpu_memory_utilization`: 控制 vLLM 可以使用的 GPU 显存比例。
+`data.shuffle`：是否在每个 epoch 开始时**打乱**数据加载的顺序。设置为`True` 或 `False`。
 
-3. **Critic Model (评论家模型)** `critic:`
+**特殊数据返回格式 (重要)**
 
-这个模型负责评估当前状态的价值（Value）。它的配置与 Actor 模型非常相似，也需要定义模型路径、学习率、分布式策略等。
+**`data.return_raw_chat`**：设置为 `True` 时，数据加载器将返回**最原始的、未经处理的聊天数据**（即 `[{'role': ..., 'content': ...}]` 这样的 Python 列表），而不会应用任何聊天模板。
 
-4. **Reward Model (奖励模型)** `reward_model:`
+**`data.return_raw_input_ids`**： 一个**至关重要**的开关，用于处理**策略模型**和**奖励模型**聊天模板不一致的情况。当设为 `True` 时，框架会先用策略模型的分词器将 `input_ids` **解码**回文本，然后再用奖励模型的分词器**重新编码**，确保奖励模型收到它能正确理解的输入。
 
-这部分用于配置一个**基于模型的奖励函数**。
+`data.return_full_prompt`：设置为 `True` 时，将返回应用了聊天模板之后的完整提示符字符串。
 
-- `enable`: **开关**，设为 `True` 时才会启用模型打分。在 GSM8K 这种有明确答案的任务中，通常设为 `False`。
-- `path`: 奖励模型的路径。
-- `input_tokenizer`: 如果奖励模型的分词器和 Actor 模型不一致，需要在这里指定。
+**性能与过滤**
 
-5. **Customized Reward Function (自定义奖励函数)** `custom_reward_function:`
+`data.filter_overlong_prompts`：是否要过滤掉那些长度超过 `max_prompt_length` 的提示。**默认值**为`False` (不过滤)。
 
-这部分就是我们之前详细讨论过的内容。
+`data.filter_overlong_prompts_workers`：当 `filter_overlong_prompts` 开启时，可以使用多个进程来加速过滤过程，特别适用于超大规模数据集。
 
-- `path`: 指向包含你的奖励函数的 `.py` 文件。
-- `name`: 指定文件中的函数名。
-- **注意**：当这里被设置时，它会**覆盖** `__init__.py` 中的自动匹配逻辑。
+#### actor_rollout_ref: 关于actor、rollout、refrence三个模型相关配置
 
-6. **Algorithm (算法核心参数)** `algorithm:`
+1. **`model` (共享模型配置)**
 
-这里定义了 PPO 算法本身的核心超参数。
+这部分定义了三个角色共同继承的基础模型信息。
 
-- `gamma` / `lam`: GAE（广义优势估计）中的折扣因子和权衡参数。
-- `use_kl_in_reward`: **开关**，是否将 KL 散度作为惩罚项直接加入奖励中。
-- `kl_ctrl`: 控制 KL 散度惩罚系数的策略，可以是固定的（`fixed`）或自适应的（`adaptive`）。
+- **`path`**: 指定基础模型的路径（本地或 Hugging Face Hub）。
+- `external_libs`: 注册自定义模型或分词器时需要导入的额外 Python 库。
+- `override_config`: 用于覆盖模型加载时的默认配置，比如 `dropout`。
+- `enable_gradient_checkpointing`: (FSDP 专属) 梯度检查点，一种用计算换显存的技术，可以显著降低训练时的显存占用。
+- `enable_activation_offload`: 将模型的激活值卸载到 CPU，进一步节省显存。
+- `trust_remote_code`: 是否允许加载需要执行远程代码的模型。
+- `use_remove_padding`: 一项性能优化，通过移除输入中的填充部分来提升训练效率。
 
-7. **Trainer (训练器)** `trainer:`
+2. **`actor` (演员/策略模型配置) **
 
-这部分控制整个训练流程。
+这部分专门定义了我们**正在训练的 Actor 模型**的行为。
 
-- `total_epochs`: 总共训练多少轮。
-- `logger`: 日志记录方式，可以是 `console`（控制台）或 `wandb`（用于实验跟踪）。
-- `nnodes` / `n_gpus_per_node`: 定义分布式训练的节点数和每个节点的 GPU 数。
-- `save_freq` / `test_freq`: 控制保存模型检查点和进行验证的频率（按迭代次数计）。
-- `resume_mode`: 控制是否以及如何从断点续训。
+- **`strategy`**: 指定分布式训练策略，如 `fsdp` 或 `megatron`。
+- **`ppo_mini_batch_size`**: PPO 算法进行一次参数更新时使用的样本数量（全局批次大小）。
+- **`ppo_micro_batch_size_per_gpu`**: **(核心)** 在单张 GPU 上进行一次前向/后向传播的样本数量，用于梯度累积，是控制显存占用的关键参数。
+- **`grad_clip`**: 梯度裁剪的阈值，防止梯度爆炸。
+- **`clip_ratio`**: PPO 算法中用于限制策略更新幅度的裁剪比率。
+- **`entropy_coeff`**: 熵损失的系数，用于鼓励策略探索。
+- **`use_kl_loss`**: 是否在 Actor 的损失函数中直接计算 KL 散度损失（GRPO 等算法需要）。
+- **`ppo_epochs`**: 使用同一批采样数据，对模型进行多少轮次的更新。
+- **`optim`**: 定义 Actor 模型的优化器 (详见下方 `optim` 配置详解)。
+- **`fsdp_config`**: FSDP 策略的详细配置，如是否开启参数卸载 (`param_offload`)、优化器状态卸载 (`optimizer_offload`) 等。
+- **`checkpoint`**: 配置模型检查点需要保存哪些内容（如模型权重、优化器状态等）。
+- **`tis_imp_ratio_cap`**: (高级) 用于截断重要性采样（Truncated Importance Sampling）的比率上限，以稳定训练。
 
+3. **`rollout` (采样/推理模型配置) **
+
+这部分定义了在**生成样本 (Rollout) 阶段**的行为，本质上是 Actor 模型在推理模式下的配置。
+
+- `name`: 指定使用的推理引擎，如 `vllm` (高性能) 或 `hf` (Hugging Face 默认)。
+- `temperaure`, `top_k`, `top_p`: 控制生成文本多样性的采样参数。
+- `dtype`: 推理时使用的数据类型，如 `bfloat16`，应与 FSDP 的设置保持一致。
+- **`gpu_memory_utilization`**: 控制 vLLM 引擎可以使用的 GPU **总显存**的比例。
+- **`tensor_model_parallel_size`**: vLLM 使用的张量并行大小，用于将推理任务分布到多张 GPU 上。
+- **`n`**: 每个 prompt 生成多少个不同的回答。当使用 GRPO、RLOO 等算法时，需要设置为大于 1 的值。
+- `load_format`: 如何将 Actor 模型的权重加载到 vLLM 引擎中，`dummy_dtensor` 是 FSDP 环境下的常用选项。
+- `calculate_log_probs`: (高级) 是否在 rollout 阶段就计算好 `log_probs`，某些高级算法（如 TIS）需要。
+- `val_kwargs`: 在**验证阶段**专用的采样参数，通常会使用更确定的采样策略（如 `temperature: 0`）以获得可复现的评估结果。
+
+4. **`ref` (参考模型配置) **
+
+这部分定义了**固定的、不参与训练的 Reference 模型**的行为，它的主要作用是作为计算 KL 散度的基准。
+
+- **`fsdp_config`**: 通常与 Actor 的配置类似，但**强烈建议开启 `param_offload: True`**，因为参考模型只进行前向传播，将其参数卸载到 CPU 可以为 Actor 和 Critic 节省大量宝贵的 GPU 显存。
+- **`log_prob_micro_batch_size_per_gpu`**: 在计算 `log_prob` 时，单张 GPU 的微批次大小。
+
+5. **`optim` (优化器配置) **
+
+这部分详细定义了**模型训练时使用的优化器及其学习率策略**。它通常在 `actor` 和 `critic` 的配置块内部定义，因为它们各自需要独立的优化策略。
+
+- **`lr`**: 学习率 (Learning Rate)，决定了每次参数更新的步长。
+- `lr_warmup_steps`: 在训练开始阶段，学习率从 0 线性增长到设定 `lr` 值所需的步数。这有助于训练初期的稳定。
+- `lr_warmup_steps_ratio`: 另一种设置预热步数的方式，按总训练步数的比例来计算。
+- `warmup_style`: 预热阶段结束后的学习率变化策略。
+  - `constant`: 学习率在预热后保持为 `lr` 不变。
+  - `cosine`: 学习率按余弦曲线从 `lr` 衰减到最低值。
+- `min_lr_ratio`: 当使用 `cosine` 衰减时，学习率可以衰减到的最低值占初始 `lr` 的比例。
+
+#### critic: 状态价值函数相关配置
+
+由官方文档，与actor模型的配置参数十分接近，由于GRPO不要critic模型，这里暂时不讨论。
+
+#### reward_model: 奖励模型相关配置
+
+这部分用于配置一个**基于神经网络模型的奖励函数**，它会学习并预测人类的偏好。
+
+- **`enable`**: 一个布尔值 (`True` 或 `False`)。设为 `True` 时，框架才会加载并使用一个模型来打分。如果为 `False`，则完全依赖自定义函数或内置规则。
+- **`model`**: 这是一个嵌套配置，定义了奖励模型本身。
+  - **`path`**: 指定你训练好的奖励模型（必须是 `AutoModelForSequenceClassification` 类型）的路径。
+  - **`input_tokenizer`**: 指定奖励模型的分词器路径。当奖励模型和策略模型的分词器/聊天模板不一致时，这是一个**必须设置**的关键参数。
+  - **`trust_remote_code`**: 是否允许加载需要执行远程代码的模型。
+- `micro_batch_size_per_gpu`: 在进行模型打分时，每张 GPU 处理的微批次大小。
+- `max_length`: 奖励模型处理序列的最大长度。
+- `reward_manager`: 定义奖励处理机制的管理器。`naive` 是默认选项，`prime` 则用于支持并行安全的验证函数。
+
+#### custom_reward_function: 自定义奖励函数相关配置
+
+这部分用于配置一个**基于代码规则的奖励函数**，让你用自己的 Python 逻辑来打分。
+
+- **`path`**: 指向一个包含你的打分逻辑的 Python 文件（例如 `my_rewards.py`）。如果留空 (`null`)，框架会尝试使用内置的、基于 `data_source` 的自动匹配函数。
+- **`name`**: 指定 `path` 文件中具体是哪个函数。如果你的函数名正好是 `compute_score`，则可以省略这个参数。
+
+#### algorithm: 算法
+
+这部分控制 PPO 算法在数学层面的核心行为。
+
+- **`gamma`**: **折扣因子**。控制对未来奖励的重视程度，`1.0` 代表最有远见。
+- **`lam`**: **GAE 参数**。在优势估计的偏差和方差之间进行权衡。
+- **`adv_estimator`**: **优势估计器**。选择计算优势函数的具体算法，`gae` 是最常用的。
+- **`use_kl_in_reward`**: **是否启用奖励内 KL 惩罚**。一个开关，决定 KL 惩罚是直接从奖励中扣除，还是作为损失函数的一部分。
+- **`kl_penalty`**: **KL 散度计算方式**。选择计算 Actor 和 Reference 策略差异的具体数学方法。
+- **`kl_ctrl`**: **KL 惩罚控制器**。
+  - **`type`**: 控制器类型，`fixed` (固定系数) 或 `adaptive` (自适应调整)。
+  - **`kl_coef`**: 惩罚系数，值越大，对模型“跑偏”的惩罚越重。
+  - **`horizon` & `target_kl`**: `adaptive` 模式下的参数，分别代表调整时参考的步数和期望的 KL 目标值。
+
+#### trainer: 训练器
+
+这部分管理整个训练流程的宏观控制。
+
+- **`total_epochs`**: **总训练轮次**。
+- **`project_name`**: **项目名称**。用于在 WandB 等工具中对实验进行顶层分组。
+- **`experiment_name`**: **实验名称**。为本次具体的运行提供一个独特的描述性名字。
+- **`logger`**: **日志记录器**。选择记录实验日志的工具，如 `console` (控制台) 和 `wandb`。
+- **`nnodes`**: **节点数**。分布式训练中使用的机器数量。
+- **`n_gpus_per_node`**: **每节点 GPU 数**。
+- **`save_freq`**: **保存频率**。每隔多少次迭代保存一次模型检查点。
+- **`val_before_train`**: **训练前验证**。是否在训练开始前先进行一次验证。
+- **`test_freq`**: **验证频率**。每隔多少次迭代进行一次验证。
+- **`critic_warmup`**: **评论家预热**。在正式开始策略学习前，单独训练 Critic 模型的迭代次数。
+- **`resume_mode`**: **断点续训模式**。
+  - `auto`: 自动从最新的检查点恢复。
+  - `disable`: 禁用，从头开始训练。
+  - `resume_path`: 从指定的路径恢复。
+- **`resume_from_path`**: 当 `resume_mode` 为 `resume_path` 时，指定检查点的具体路径。
