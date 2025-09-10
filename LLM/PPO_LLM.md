@@ -78,7 +78,7 @@ $Loss = -log\ sigmoid(score_{chosen}-score_{rejected})=-\log(\frac{1}{1+e^{-x}})
 
 蒙特卡洛法：$V_{label}(s_t)=r_t+\gamma r_{t+1}+\gamma^2 r_{t+2}+\dots+\gamma^{T-t}r^T$，方差大，偏差小
 
-时序差分法：$V_{label}(s_t)=r_t+\gamma V(s_{t+1})$，偏差小，方差大
+时序差分法：$V_{label}(s_t)=r_t+\gamma V(s_{t+1})$，偏差大，方差小
 
 广义优势法：$V_{label}(s_t)=A_t^{GAE}+V(s_t)$，平衡方差和偏差
 
@@ -178,13 +178,13 @@ PPO loss和State Value的loss一起做反向传播
 
 ```python
 for batch_prompt in prompt_dataset:
-    batch_response = active_model.generate(batch_prompt) # prompt数据集中抽一个prompt，使用重要性采样网络即现在正在训练的模型进行回答生成
+    batch_response = active_model.generate(batch_prompt) # prompt数据集中抽一个batch的prompt，使用重要性采样网络即现在正在训练的模型进行回答生成
     batch_data = concat(batch_prompt, batch_response) # 问题和回答合并，生成训练文本
     batch_scores = reward_model(batch_data) # 用reward model对回答进行打分
 
     batch_all_probs, batch_probs, batch_all_values = active_model.forward_pass(batch_data) # 使用重要性采样模型计算: batch_all_probs(输出每个token时, 整个词表上的的状态分布), batch_probs(每个输出token的概率), batch_all_values(每个输出token的状态价值)
     ref_all_probs, ref_probs, ref_all_values = ref_model.forward_pass(batch_data) # 基准模型也计算上述的三个值
-    kls = compute_KL(batch_all_probs, ref_all_probs) # 基准模型和当前正在训练模型的KL散度
+    kls = compute_KL(batch_all_probs, ref_all_probs) # 基准模型和当前正在训练模型(在输出每个token时概率分布)的KL散度
     rewards = compute_rewards(batch_scores, kls) # 计算每个输出token的reward
     advantages = compute_advantages(batch_all_values, rewards) # 计算A^{GAE}优势值
     returns = advantages + batch_all_values # 状态价值函数的目标值
@@ -204,6 +204,6 @@ for batch_prompt in prompt_dataset:
 额外补充：
 
 - 外循环是每batch prompt，都用active_model（正在训练的模型）进行采样，并生成advantages和returns，用于每个epoch内的训练
-- 内循环才是多次epoch的循环，每epoch中active_model和state_value_model（这里内置成active_model的一部分了）的参数都会被更新，
+- 内循环才是多次epoch的循环，每epoch中active_model和state_value_model（这里内置成active_model的一部分了）的参数都会被更新
 
 采样的模型和正在训练的模型是又不完全是一个模型（训练过程中用的是历史采样的数据）

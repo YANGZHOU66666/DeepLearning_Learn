@@ -10,7 +10,7 @@ source: [Prepare Data for Post-Training — verl documentation](https://verl.rea
 1. data_source
 作用: 数据集的唯一标识符，用于后续匹配对应的奖励函数。
 格式: 字符串 (String)。
-示例: 'openai
+示例: 'openai'
 
 2. prompt
 作用: 将要输入给大模型的实际内容。
