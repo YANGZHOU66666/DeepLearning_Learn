@@ -52,9 +52,9 @@ $attention=softmax(\frac{QK^T}{\sqrt{d}})V=softmax(\frac{XW^Q(C^{KV}W^{UK})^T}{\
 
 这里定义一个$W^{QUK}=W^Q{W^{UK}}^T$（这个在推理时显然是常量），就可以避免从KV cache中取出$C^{KV}$向量之后再额外花时间计算K向量
 
+由于$VW^O=CW^{UV}W^O$，
+
 同理可以定义一个$W^{UVO}=W^{UV}W^O$来解决V向量解压缩时的额外计算（这里$W^O$是将V加权平均后的值再映射到输出维度的矩阵）
-
-
 
 **对Q向量进行压缩：**
 

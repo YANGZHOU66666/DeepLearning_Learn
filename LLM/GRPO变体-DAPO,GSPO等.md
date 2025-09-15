@@ -60,7 +60,7 @@ where $$ r_{i,t}(\theta) = \frac{\pi_\theta(o_{i,t} \mid q, o_{i,<t})}{\pi_{\the
 
 强化学习中，默认会对过长回答进行裁剪，这样会导致噪音的增加，通过实验说明了这一点。
 
-保留裁剪过的 vs filter掉裁剪的回答，只使用在允许的长度内的回答：（lanse是filter，紫色是不filter）
+保留裁剪过的 vs filter掉裁剪的回答，只使用在允许的长度内的回答：（蓝色是filter，紫色是不filter）
 
 ![](./assets/DAPO回答过长裁剪效果.png)
 

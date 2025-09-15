@@ -161,6 +161,14 @@ $p_i$: 一个批次中所有token对该专家的路由概率的平均值，由so
 
 
 
+DeepSeek-V3的负载均衡：Auxiliary-Loss-Free Load Balancing
+
+（即不用辅助loss的负载均衡）
+
+对每个专家得分$s_i,t$后添加一个可学习的bias：$g'_{i,t}=s_{i,t}+b_i$
+
+如果一个专家是过载状态，就降低bias；如果一个专家负载不足，就增加bias
+
 
 
 ## DeepSeek MoE
@@ -198,3 +206,5 @@ deepseek MoE 基本达到MoE的极限
 ![](./assets/DeepseekMoE vs Gshard.png)
 
 ->即使参数量只有一半，DeepseekMoE仍然比GShard效果好
+
+DeepSeek-V3：1个共享专家+256个路由专家，其中8个专家被激活
