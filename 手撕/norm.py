@@ -54,3 +54,22 @@ class LayerNorm(nn.Module):
         norm = (x-mean)/torch.sqrt(var+self.epsilon)
         return self.gamma*norm+self.beta
         
+
+class RMSNorm(nn.Module):
+    def __init__(self, normalized_shape, epsilon=1e-5):
+        super.__init__()
+        if isinstance(normalized_shape, int):
+            normalized_shape = (normalized_shape,)
+        self.epsilon = epsilon
+        self.gamma = nn.Parameter(torch.ones(normalized_shape))
+    
+    def forward(self, x):
+        normalized_dims = tuple(range(-len(normalized_dims),0))
+        batch_size, seq_len, embed_dim = x.shape
+        
+        squares = x**2
+        means = squares.mean(dim=normalized_dims, keepdim=True)
+        sqrt_means = torch.sqrt(means+self.epsilon)
+        x_hats = x/sqrt_means
+        outs = x_hats*self.gamma
+        return outs
