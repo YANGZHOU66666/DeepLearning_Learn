@@ -26,7 +26,7 @@
 
 当生成token过程中当前block占满后，会继续分配一个新的block。按需分配，不会提前占用显存；按block分配，减少碎片大小
 
-![](./assets/paged attention.png)
+![](./assets/Paged Attention.png)
 
 - 虚拟化：
 

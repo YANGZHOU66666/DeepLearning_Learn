@@ -45,6 +45,28 @@ $4096 * 4 + 4 * 4096 = 32768$
 
 
 
+## 反向传播推导
+
+原本公式：$$h = W_0 x + \Delta W x = W_0 x + BAx$$
+
+本层输出对矩阵B的梯度：$$\frac{\partial \mathcal{L}}{\partial B} = \frac{\partial \mathcal{L}}{\partial h} \cdot \frac{\partial h}{\partial B} = \nabla_h (Ax)^T$$
+
+本层输出对矩阵A的梯度：$$\frac{\partial \mathcal{L}}{\partial A} = B^T \cdot \frac{\partial \mathcal{L}}{\partial h} \cdot x^T = B^T \nabla_h x^T$$
+
+
+
+## 初始化顺序
+
+对$h = W_0x + BAx$：
+
+B全0初始化，A随机初始化。
+
+若都全0：根据上面的梯度计算，梯度全为0；
+
+若都全随机：引入大量噪声，可能一开始直接崩了
+
+一般希望后算的模块为全0，这样无论Ax是啥，都能被0兜住
+
 ## LoRA的优点
 
 1. 大大节省微调大模型的参数量
