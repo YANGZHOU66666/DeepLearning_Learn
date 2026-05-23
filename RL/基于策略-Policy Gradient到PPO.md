@@ -2,6 +2,8 @@
 
 ## RL基础
 
+马尔可夫过程：$M = (S, A, P, R, \gamma)$。状态、动作、策略（概率）、奖励、折扣因子
+
 **Action Space:** 可选择的动作，比如 {left, up, right}
 
 **Policy:** 策略函数，输入 State，输出 Action 的概率分布。一般用 π 表示。
