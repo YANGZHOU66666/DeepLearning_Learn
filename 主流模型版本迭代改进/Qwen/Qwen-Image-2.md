@@ -98,6 +98,28 @@ Stage 4用到：Resolution Filter、Image Quality Filter（过滤掉低质量的
 
 ## 模型架构（3 Architecture）
 
+总览：
+
+一个MLLM（Qwen3-VL）用于语义+图像理解，一个VAE Encoder/Decoder用于图像编解码，一个MMDiT用于根据VAE Encode的latent向量+MLLM给的语义向量，给出去噪后的图像latent向量。
+
+另有一个Prompt Enhancer用于用户prompt改写
+
+### VAE
+
+VAE有个三点的权衡：压缩率、重建忠实度（即能不能重建的好）、可扩散性（即是否容易被扩散模型画出来）
+
+压缩率过高，重建忠实度会下降；而若用添加通道数的方法增多保留信息，会更难扩散出来
+
+TODO
+
+### Multi-modal Diffusion Transformer（MMDiT）
+
+<br />
+
+### Prompt Enhancer（PE）
+
+基于Qwen3.5-9B进行后训练
+
 <br />
 
 ## 训练（4 Training）
